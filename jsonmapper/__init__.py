@@ -36,6 +36,7 @@ from time import strptime, struct_time
 __all__ = ['Mapping', 'Field', 'TextField', 'FloatField',
            'IntegerField', 'LongField', 'BooleanField', 'DecimalField',
            'DateField', 'DateTimeField', 'TimeField', 'DictField', 'ListField',
+           'TypedField',
            ]
 __docformat__ = 'restructuredtext en'
 
@@ -348,6 +349,51 @@ class DictField(Field):
         if not isinstance(value, Mapping):
             value = self.mapping(**value)
         return value.unwrap()
+
+
+class TypedField(Field):
+    """Chooses the mapping based on a "type" field for polymorphic data mapping.
+
+    >>> class Foo(Mapping):
+    ...     x = TextField()
+    >>> class Bar(Mapping):
+    ...     y = TextField()
+    >>> class Baz(Mapping):
+    ...    z = TypedField({'foo': Foo, 'bar': Bar})
+
+    >>> Baz.wrap({'z': {'type': 'foo', 'x': 'hello'}}).z
+    <Foo {'x': 'hello', 'type': 'foo'}>
+
+    >>> Baz.wrap({'z': {'type': 'bar', 'y': 'world'}}).z
+    <Bar {'y': 'world', 'type': 'bar'}>
+
+    """
+    def __init__(self, mappings, type_key='type', name=None, default=None):
+        if default is not None:
+            default = lambda: default.copy()
+        Field.__init__(self, name=name, default=default)
+        self.type_key = type_key
+        self.mappings = mappings
+
+    def _to_python(self, value):
+        mapping = self.mappings[value[self.type_key]]
+        return mapping.wrap(value)
+
+    def _to_json(self, value):
+        if isinstance(value, Mapping):
+            for value_type, mapping in self.mappings.iteritems():
+                if isinstance(value, mapping):
+                    break
+            else:
+                # FIXME better error message
+                 raise ValueError('Unknown value type')
+        else:
+            value_type = value[self.type_key]
+            mapping = self.mappings[value_type]
+            value = mapping(**value)
+        value = value.unwrap()
+        value[self.type_key] = value_type
+        return value
 
 
 class ListField(Field):
